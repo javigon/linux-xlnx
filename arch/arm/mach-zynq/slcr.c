@@ -29,6 +29,15 @@
 #include <linux/clk/zynq.h>
 #include "common.h"
 
+#ifndef NONSECURE_HW_ACCESS
+#undef __raw_readl
+#undef __raw_writel
+#define __raw_readl(addr) \
+    secure_read(addr)
+#define __raw_writel(val, addr) \
+    secure_write(val, addr)
+#endif
+
 #define DRIVER_NAME "xslcr"
 
 #define XSLCR_LOCK			0x4   /* SLCR lock register */
@@ -160,7 +169,10 @@
 #define xslcr_writereg(offset, val)	__raw_writel(val, offset)
 #define xslcr_readreg(offset)		__raw_readl(offset)
 
-void __iomem *zynq_slcr_base;
+extern uint32_t secure_read(void *);
+extern void secure_write(uint32_t, void *);
+
+/* void __iomem *zynq_slcr_base; */
 
 /**
  * struct xslcr - slcr device data.
@@ -2477,6 +2489,7 @@ module_init(xslcr_arch_init);
 int __init xslcr_init(void)
 {
 	struct device_node *np;
+	u32 slcr_va;
 
 	np = of_find_compatible_node(NULL, NULL, "xlnx,zynq-slcr");
 	if (!np) {
@@ -2491,24 +2504,25 @@ int __init xslcr_init(void)
 		BUG();
 	}
 
-	slcr->regs = of_iomap(np, 0);
+	slcr_va  = of_iomap(np, 0);
+	slcr->regs=0xf8000000;
+	
 	if (!slcr->regs) {
 		pr_err("%s: Unable to map I/O memory\n", __func__);
 		BUG();
 	}
 
-	zynq_slcr_base = slcr->regs;
 
 	/* init periph_status based on the data from MIO control registers */
 	xslcr_get_mio_status();
+
 
 	/* unlock the SLCR so that registers can be changed */
 	xslcr_writereg(slcr->regs + XSLCR_UNLOCK, 0xDF0D);
 
 	pr_info("%s mapped to %p\n", DRIVER_NAME, slcr->regs);
-
-	zynq_clock_init(slcr->regs);
-
+	zynq_clock_init(slcr_va);
+	
 	of_node_put(np);
 
 	return 0;

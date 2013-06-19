@@ -611,3 +611,21 @@ __pv_offset:
 #endif
 
 #include "head-common.S"
+
+.section ".text", "ax"
+/* Temporary Workarounds for non secure access failure */
+ENTRY(secure_read)
+	mov r1, r0
+	ldr r0, =-30  /* smc call id - read */
+.arch_extension sec
+	smc #0
+	bx  lr
+ENDPROC(secure_read)
+
+ENTRY(secure_write)
+	mov r2, r0
+	ldr r0, =-31 /* smc call id - write */
+.arch_extension sec
+	smc #0
+	bx  lr
+ENDPROC(secure_write)

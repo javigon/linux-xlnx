@@ -24,6 +24,15 @@
 #include <asm/smp_twd.h>
 #include "common.h"
 
+#ifndef NONSECURE_HW_ACCESS
+#undef __raw_readl
+#undef __raw_writel
+#define __raw_readl(addr) \
+	secure_read(addr)
+#define __raw_writel(val, addr) \
+	secure_write(val, addr)
+#endif
+
 /*
  * This driver configures the 2 16-bit count-up timers as follows:
  *
@@ -94,6 +103,9 @@ struct xttcps_timer_clockevent {
 
 #define to_xttcps_timer_clkevent(x) \
 		container_of(x, struct xttcps_timer_clockevent, ce)
+
+extern uint32_t secure_read(void *);
+extern void secure_write(uint32_t, void *);
 
 /**
  * xttcps_set_interval - Set the timer interval value
@@ -417,8 +429,8 @@ static void __init xttcps_timer_init(struct device_node *timer)
 		BUG();
 	}
 
-	zynq_ttc_setup_clocksource(clk, timer_baseaddr);
-	zynq_ttc_setup_clockevent(clk, timer_baseaddr + 4, irq);
+	zynq_ttc_setup_clocksource(clk, 0xf8001008);
+	zynq_ttc_setup_clockevent(clk, 0xf8001004, irq);
 
 #ifdef CONFIG_HAVE_ARM_TWD
 	twd_local_timer_of_register();

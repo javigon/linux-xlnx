@@ -16,6 +16,18 @@
 #include "logicvc.h"
 #include "xylonfb.h"
 
+#ifndef NONSECURE_HW_ACCESS
+#undef readl
+#undef writel
+#define readl(addr) \
+   secure_read(addr)
+#define writel(val, addr) \
+   secure_write(val, addr)
+#endif
+
+extern uint32_t secure_read(void *);
+extern void secure_write(uint32_t, void *);
+
 
 static int xylonfb_get_vblank(struct fb_vblank *vblank, struct fb_info *fbi)
 {

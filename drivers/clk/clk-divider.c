@@ -17,6 +17,33 @@
 #include <linux/err.h>
 #include <linux/string.h>
 
+#ifndef NONSECURE_HW_ACCESS
+extern uint32_t secure_read(void *);
+extern void secure_write(u32, void *);
+extern void __iomem *zynq_slcr_base1;
+
+static inline u32 sw_readl(void* addr)
+{
+	if(((u32)addr & 0xfffff000) == (u32)zynq_slcr_base1) { 
+    	return secure_read(0xf8000000 + ((u32)addr & 0xfff));
+	} 
+	else { 
+		return readl(addr); 
+	} 
+}
+
+static inline u32 sw_writel(u32 val,void* addr)
+{
+    if(((u32)addr & 0xfffff000) == (u32)zynq_slcr_base1) {
+        secure_write(val,0xf8000000 + ((u32)addr & 0xfff));
+    }
+    else {
+        writel(val,addr);
+    }
+}
+#endif
+
+
 /*
  * DOC: basic adjustable divider clock that cannot gate
  *
@@ -31,6 +58,8 @@
 
 #define div_mask(d)	((1 << (d->width)) - 1)
 #define is_power_of_two(i)	!(i & ~i)
+
+extern uint32_t secure_read(void *);
 
 static unsigned int _get_table_maxdiv(const struct clk_div_table *table)
 {
@@ -103,10 +132,9 @@ static unsigned long clk_divider_recalc_rate(struct clk_hw *hw,
 {
 	struct clk_divider *divider = to_clk_divider(hw);
 	unsigned int div, val;
-
-	val = readl(divider->reg) >> divider->shift;
+	
+	val = sw_readl(divider->reg) >> divider->shift;
 	val &= div_mask(divider);
-
 	div = _get_div(divider, val);
 	if (!div) {
 		WARN(1, "%s: Invalid divisor for clock %s\n", __func__,
@@ -216,10 +244,10 @@ static int clk_divider_set_rate(struct clk_hw *hw, unsigned long rate,
 	if (divider->lock)
 		spin_lock_irqsave(divider->lock, flags);
 
-	val = readl(divider->reg);
+	val = sw_readl(divider->reg);
 	val &= ~(div_mask(divider) << divider->shift);
 	val |= value << divider->shift;
-	writel(val, divider->reg);
+	sw_writel(val, divider->reg);
 
 	if (divider->lock)
 		spin_unlock_irqrestore(divider->lock, flags);
@@ -243,7 +271,7 @@ static struct clk *_register_divider(struct device *dev, const char *name,
 	struct clk_divider *div;
 	struct clk *clk;
 	struct clk_init_data init;
-
+	
 	/* allocate the divider */
 	div = kzalloc(sizeof(struct clk_divider), GFP_KERNEL);
 	if (!div) {

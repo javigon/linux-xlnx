@@ -143,8 +143,17 @@
 #define XILINX_VDMA_DEVICE_ID_SHIFT	28
 
 /* IO accessors */
+#define NONSECURE_HW_ACCESS
+#ifdef NONSECURE_HW_ACCESS
 #define VDMA_OUT(addr, val)	(iowrite32(val, addr))
 #define VDMA_IN(addr)		(ioread32(addr))
+#else
+#define VDMA_OUT(addr, val)  (secure_write(val, addr))
+#define VDMA_IN(addr)  (secure_read(addr))
+#endif
+
+extern uint32_t secure_read(void *);
+extern void secure_write(uint32_t, void *);
 
 /* Hardware descriptor */
 struct xilinx_vdma_desc_hw {
@@ -586,7 +595,7 @@ static int vdma_init(struct xilinx_vdma_chan *chan)
 {
 	int loop = XILINX_VDMA_RESET_LOOP;
 	u32 tmp;
-
+	
 	VDMA_OUT(&chan->regs->cr,
 		VDMA_IN(&chan->regs->cr) | XILINX_VDMA_CR_RESET_MASK);
 
@@ -1232,8 +1241,9 @@ static int xilinx_vdma_of_probe(struct platform_device *op)
 		}
 
 		value = of_get_property(node, "xlnx,num-fstores", NULL);
-		if (value)
+		if (value) {
 			num_frames = be32_to_cpup(value);
+		}
 
 		value = of_get_property(node, "xlnx,flush-fsync", NULL);
 		if (value)

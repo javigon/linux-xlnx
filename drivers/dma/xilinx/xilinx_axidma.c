@@ -113,12 +113,21 @@
 #define XILINX_DMA_DEVICE_ID_SHIFT	28
 
 /* IO accessors */
+#define NONSECURE_HW_ACCESS
+#ifdef NONSECURE_HW_ACCESS
 #define DMA_OUT(addr, val)	(iowrite32(val, addr))
 #define DMA_IN(addr)		(ioread32(addr))
+#else
+#define DMA_OUT(addr, val)  (secure_write(val, addr))
+#define DMA_IN(addr)  (secure_read(addr))
+#endif
 
 #ifdef CONFIG_XILINX_DMATEST
 #define TEST_DMA_WITH_LOOPBACK
 #endif
+
+extern uint32_t secure_read(void *);
+extern void secure_write(uint32_t, void *);
 
 /* Hardware descriptor */
 struct xilinx_dma_desc_hw {
@@ -1109,7 +1118,6 @@ static int xilinx_dma_of_probe(struct platform_device *op)
 	 * Axi DMA only do slave transfers
 	 */
 	if (of_device_is_compatible(node, "xlnx,axi-dma")) {
-
 		xdev->feature |= XILINX_DMA_IP_DMA;
 		value = of_get_property(node,
 				"xlnx,sg-include-stscntrl-strm",

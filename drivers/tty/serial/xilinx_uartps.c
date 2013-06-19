@@ -32,6 +32,32 @@
 #include <linux/slab.h>
 #include <linux/clk.h>
 
+struct uart_port *port;
+
+#ifndef NONSECURE_HW_ACCESS
+extern uint32_t secure_read(void *);
+extern void secure_write(uint32_t, void *);
+
+static inline u32 sw_ioread32(void* addr) {
+	if(((u32)addr & 0xfffff000) == port->membase) {
+		return secure_read(0xe0001000 + ((u32)addr & 0xfff));
+	}
+	else {
+		return ioread32(addr);
+	}
+}
+
+static inline u32 sw_iowrite32(u32 val,void* addr) {
+	if(((u32)addr & 0xfffff000) == port->membase) {
+		secure_write(val,0xe0001000 + ((u32)addr & 0xfff));
+	}
+	else {
+		iowrite32(val,addr);
+	}
+}
+#endif
+
+
 #define XUARTPS_TTY_NAME	"ttyPS"
 #define XUARTPS_NAME		"xuartps"
 #define XUARTPS_MAJOR		0	/* use dynamic node allocation */
@@ -42,8 +68,8 @@
 
 #define XUARTPS_REGISTER_SPACE	0xFFF
 
-#define xuartps_readl(offset)		ioread32(port->membase + offset)
-#define xuartps_writel(val, offset)	iowrite32(val, port->membase + offset)
+#define xuartps_readl(offset)		sw_ioread32(port->membase + offset)
+#define xuartps_writel(val, offset)	sw_iowrite32(val, port->membase + offset)
 
 /* Rx Trigger level */
 static int rx_trigger_level = 56;
@@ -399,6 +425,7 @@ static unsigned int xuartps_set_baud_rate(struct uart_port *port,
 	int div8;
 	struct xuartps *xuartps = port->private_data;
 
+#if 0
 	calc_baud = xuartps_calc_baud_divs(port->uartclk, baud, &bdiv, &cd,
 			&div8);
 
@@ -411,7 +438,9 @@ static unsigned int xuartps_set_baud_rate(struct uart_port *port,
 	xuartps_writel(mreg, XUARTPS_MR_OFFSET);
 	xuartps_writel(cd, XUARTPS_BAUDGEN_OFFSET);
 	xuartps_writel(bdiv, XUARTPS_BAUDDIV_OFFSET);
+#endif
 	xuartps->baud = baud;
+	calc_baud= baud;
 
 	return calc_baud;
 }
@@ -1045,8 +1074,6 @@ static struct uart_port xuartps_port[2];
  **/
 static struct uart_port *xuartps_get_port(int id)
 {
-	struct uart_port *port;
-
 	/* try the given port id if failed use default method */
 	if (xuartps_port[id].mapbase != 0) {
 		/* Find the next unused port */
@@ -1158,6 +1185,7 @@ static void xuartps_console_write(struct console *co, const char *s,
  **/
 static int __init xuartps_console_setup(struct console *co, char *options)
 {
+	
 	struct uart_port *port = &xuartps_port[co->index];
 	int baud = 9600;
 	int bits = 8;

@@ -32,6 +32,33 @@
 #include <linux/hwmon.h>
 #include <linux/hwmon-sysfs.h>
 
+static u32 iobase_val;
+
+#ifndef NONSECURE_HW_ACCESS
+extern uint32_t secure_read(void *);
+extern void secure_write(u32, void *);
+
+static inline u32 sw_readl(void* addr)
+{
+    if(((u32)addr & 0xfffff000) == iobase_val) {
+        return secure_read(0xf8007000 + ((u32)addr & 0xfff));
+    }
+    else {
+        return readl(addr);
+    }
+}
+
+static inline u32 sw_writel(u32 val,void* addr)
+{
+    if(((u32)addr & 0xfffff000) == iobase_val) {
+        secure_write(val, 0xf8007000 + ((u32)addr & 0xfff));
+    }
+    else {
+        writel(val,addr);
+    }
+}
+#endif
+
 /* XADC interface register offsets */
 #define XADC_CONFIG	0x00
 #define XADC_INTSTS	0x04
@@ -119,8 +146,8 @@
 /* Sequencer registers 0 */
 #define REG_SEQ_V		(1 << 11)
 
-#define READ(dev, reg) readl((dev->iobase + XADC_##reg))
-#define WRITE(dev, reg, value) writel(value, dev->iobase+XADC_##reg)
+#define READ(dev, reg) sw_readl((dev->iobase + XADC_##reg))
+#define WRITE(dev, reg, value) sw_writel(value, dev->iobase+XADC_##reg)
 
 #define GETFIELD(reg, field, value) \
 	(((value) >> (reg##_##field##_SHIFT)) & reg##_##field##_MSK)
@@ -683,7 +710,6 @@ static int xadc_probe(struct platform_device *pdev)
 
 	xadc->mem = request_mem_region(xadc->mem->start,
 			resource_size(xadc->mem), pdev->name);
-
 	if (!xadc->mem) {
 		ret = -ENODEV;
 		dev_err(xadc->dev, "Failed to request memory region\n");
@@ -691,6 +717,8 @@ static int xadc_probe(struct platform_device *pdev)
 	}
 
 	xadc->iobase = ioremap(xadc->mem->start, resource_size(xadc->mem));
+	iobase_val = ((u32)xadc->iobase & 0xfffff000);
+
 	if (!xadc->iobase) {
 		ret = -ENODEV;
 		dev_err(xadc->dev, "Failed to ioremap memory\n");
@@ -730,8 +758,10 @@ static int xadc_probe(struct platform_device *pdev)
 	}
 
 	WRITE(xadc, CONFIG, 0);
+
 	WRITE(xadc, CTL, 0); /* ~RESET */
 
+	
 	WRITE(xadc, CONFIG, XADC_CONFIG_WEDGE | /* Default values */
 		XADC_CONFIG_REDGE |
 		SETFIELD(XADC_CONFIG, TCKRATE, TCKRATE_DIV16) |
@@ -754,7 +784,7 @@ static int xadc_probe(struct platform_device *pdev)
 		val & REG_FLAG_REF ? "internal" : "external");
 
 	clk_disable(xadc->clk);
-
+	
 	return 0;
 
 err_group:

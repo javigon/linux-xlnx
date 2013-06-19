@@ -24,6 +24,14 @@
 #include "../misc/xylonfb-misc.h"
 #endif
 
+#ifndef NONSECURE_HW_ACCESS
+#undef readl
+#undef writel
+#define readl(addr) \
+   secure_read(addr)
+#define writel(val, addr) \
+   secure_write(val, addr)
+#endif
 
 #define XYLONFB_PSEUDO_PALETTE_SZ 256
 
@@ -31,6 +39,8 @@
 #define LOGICVC_PIX_FMT_AVUY  v4l2_fourcc('A', 'V', 'U', 'Y')
 #define LOGICVC_PIX_FMT_ALPHA v4l2_fourcc('A', '8', ' ', ' ')
 
+extern uint32_t secure_read(void *);
+extern void secure_write(uint32_t, void *);
 
 static struct xylonfb_vmode_data xylonfb_vmode = {
 	.fb_vmode = {
@@ -1680,7 +1690,11 @@ int xylonfb_init_driver(struct xylonfb_init_data *init_data)
 
 	reg_base_phys = reg_res->start;
 	reg_range = reg_res->end - reg_res->start;
+#ifdef NONSECURE_HW_ACCESS
 	reg_base_virt = ioremap_nocache(reg_base_phys, reg_range);
+#else
+	reg_base_virt = reg_base_phys;
+#endif
 
 	/* load layer parameters for all layers */
 	for (i = 0; i < layers; i++)

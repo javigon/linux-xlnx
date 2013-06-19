@@ -20,6 +20,15 @@
 #include <linux/of.h>
 #include <linux/clk/zynq.h>
 
+#ifndef NONSECURE_HW_ACCESS
+#undef readl
+#undef writel
+#define readl(addr) \
+    secure_read(addr)
+#define writel(val, addr) \
+    secure_write(val, addr)
+#endif
+
 #define SLCR_ARM_CLK_CTRL		(slcr_base + 0x120)
 #define SLCR_DDR_CLK_CTRL		(slcr_base + 0x124)
 #define SLCR_DCI_CLK_CTRL		(slcr_base + 0x128)
@@ -40,8 +49,12 @@
 #define SLCR_FPGA3_CLK_CTRL		(slcr_base + 0x1a0)
 #define SLCR_621_TRUE			(slcr_base + 0x1c4)
 
-static void __iomem *zynq_slcr_base;
+extern uint32_t secure_read(void *);
+extern void secure_write(uint32_t, void *);
 
+/* add static */
+void __iomem *zynq_slcr_base1;
+/*static void __iomem *zynq_slcr_base; */
 
 /* clock implementation for Zynq PLLs */
 
@@ -419,9 +432,13 @@ static void clk_register_zynq_pll(struct device_node *np)
 
 	/* Populate the struct */
 	pll->hw.init = &initd;
-	pll->pll_ctrl = zynq_slcr_base + regs[0];
+	/* pll->pll_ctrl = zynq_slcr_base + regs[0];
 	pll->pll_cfg = zynq_slcr_base + regs[1];
-	pll->pll_status = zynq_slcr_base + regs[2];
+	pll->pll_status = zynq_slcr_base + regs[2]; */
+	pll->pll_ctrl = 0xf8000000 + regs[0];
+	pll->pll_cfg = 0xf8000000 + regs[1];
+	pll->pll_status = 0xf8000000 + regs[2];
+
 	spin_lock_init(&pll->lock);
 	ret = of_property_read_u32(np, "lockbit", &pll->lockbit);
 	if (WARN_ON(ret))
@@ -524,8 +541,8 @@ void __init zynq_clock_init(void __iomem *slcr_base)
 	struct clk *clk;
 
 	pr_info("Zynq clock init\n");
+	zynq_slcr_base1 = slcr_base; 
 
-	zynq_slcr_base = slcr_base;
 	of_clk_init(clk_match);
 
 	/* CPU clocks */
