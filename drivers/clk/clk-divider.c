@@ -17,33 +17,6 @@
 #include <linux/err.h>
 #include <linux/string.h>
 
-#ifndef NONSECURE_HW_ACCESS
-extern uint32_t secure_read(void *);
-extern void secure_write(u32, void *);
-extern void __iomem *zynq_slcr_base1;
-
-static inline u32 sw_readl(void* addr)
-{
-	if(((u32)addr & 0xfffff000) == (u32)zynq_slcr_base1) { 
-    	return secure_read(0xf8000000 + ((u32)addr & 0xfff));
-	} 
-	else { 
-		return readl(addr); 
-	} 
-}
-
-static inline u32 sw_writel(u32 val,void* addr)
-{
-    if(((u32)addr & 0xfffff000) == (u32)zynq_slcr_base1) {
-        secure_write(val,0xf8000000 + ((u32)addr & 0xfff));
-    }
-    else {
-        writel(val,addr);
-    }
-}
-#endif
-
-
 /*
  * DOC: basic adjustable divider clock that cannot gate
  *
@@ -59,7 +32,36 @@ static inline u32 sw_writel(u32 val,void* addr)
 #define div_mask(d)	((1 << (d->width)) - 1)
 #define is_power_of_two(i)	!(i & ~i)
 
+extern void __iomem *zynq_slcr_base;
+extern void __iomem *zynq_slcr_virt_base;
+
+/* TODO: We need to figure out if this is a good way to do this - I don't think
+ * so... We at least need to change the names here..
+ */
 extern uint32_t secure_read(void *);
+extern void secure_write(uint32_t, void *);
+
+static inline u32 sw_readl(void __iomem *addr)
+{
+	if(((u32)addr & 0xfffff000) == (u32)zynq_slcr_virt_base) {
+		pr_info("secure_read. addr: %p, slcr_base1: %p\n", addr,
+				zynq_slcr_virt_base);
+		return secure_read(zynq_slcr_base + ((u32)addr & 0xfff));
+	} else {
+		pr_info("normal_read. addr: %p, slcr_base: %p\n", addr,
+				zynq_slcr_base);
+		return readl(addr);
+	}
+}
+
+static inline void sw_writel(volatile void __iomem *addr, u32 val)
+{
+	if(((u32)addr & 0xfffff000) == (u32)zynq_slcr_virt_base) {
+		secure_write(val, zynq_slcr_base + ((u32)addr & 0xfff));
+	} else {
+		writel(val, addr);
+	}
+}
 
 static unsigned int _get_table_maxdiv(const struct clk_div_table *table)
 {
@@ -132,9 +134,12 @@ static unsigned long clk_divider_recalc_rate(struct clk_hw *hw,
 {
 	struct clk_divider *divider = to_clk_divider(hw);
 	unsigned int div, val;
-	
+
+	pr_info("Divider address: %p\n", divider->reg);
+
 	val = sw_readl(divider->reg) >> divider->shift;
 	val &= div_mask(divider);
+
 	div = _get_div(divider, val);
 	if (!div) {
 		WARN(1, "%s: Invalid divisor for clock %s\n", __func__,
@@ -142,6 +147,7 @@ static unsigned long clk_divider_recalc_rate(struct clk_hw *hw,
 		return parent_rate;
 	}
 
+	pr_info("Passed this point\n");
 	return parent_rate / div;
 }
 
@@ -271,7 +277,7 @@ static struct clk *_register_divider(struct device *dev, const char *name,
 	struct clk_divider *div;
 	struct clk *clk;
 	struct clk_init_data init;
-	
+
 	/* allocate the divider */
 	div = kzalloc(sizeof(struct clk_divider), GFP_KERNEL);
 	if (!div) {

@@ -610,8 +610,7 @@ __pv_offset:
 	.long	0
 #endif
 
-#include "head-common.S"
-
+#ifdef CONFIG_ARM_TRUSTZONE
 .section ".text", "ax"
 /* Temporary Workarounds for non secure access failure */
 ENTRY(secure_read)
@@ -629,3 +628,6 @@ ENTRY(secure_write)
 	smc #0
 	bx  lr
 ENDPROC(secure_write)
+#endif
+
+#include "head-common.S"

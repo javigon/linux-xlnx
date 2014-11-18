@@ -32,32 +32,6 @@
 #include <linux/slab.h>
 #include <linux/clk.h>
 
-struct uart_port *port;
-
-#ifndef NONSECURE_HW_ACCESS
-extern uint32_t secure_read(void *);
-extern void secure_write(uint32_t, void *);
-
-static inline u32 sw_ioread32(void* addr) {
-	if(((u32)addr & 0xfffff000) == port->membase) {
-		return secure_read(0xe0001000 + ((u32)addr & 0xfff));
-	}
-	else {
-		return ioread32(addr);
-	}
-}
-
-static inline u32 sw_iowrite32(u32 val,void* addr) {
-	if(((u32)addr & 0xfffff000) == port->membase) {
-		secure_write(val,0xe0001000 + ((u32)addr & 0xfff));
-	}
-	else {
-		iowrite32(val,addr);
-	}
-}
-#endif
-
-
 #define XUARTPS_TTY_NAME	"ttyPS"
 #define XUARTPS_NAME		"xuartps"
 #define XUARTPS_MAJOR		0	/* use dynamic node allocation */
@@ -68,8 +42,46 @@ static inline u32 sw_iowrite32(u32 val,void* addr) {
 
 #define XUARTPS_REGISTER_SPACE	0xFFF
 
-#define xuartps_readl(offset)		sw_ioread32(port->membase + offset)
-#define xuartps_writel(val, offset)	sw_iowrite32(val, port->membase + offset)
+struct uart_port *port;
+u8 xuartps_map_world;
+
+extern uint32_t secure_read(void *);
+extern void secure_write(uint32_t, void *);
+
+/*
+ * TODO: Generalize this in the TrustZone driver so that each
+ * target implements this operation. This is done to support
+ * architectures where virtual addresses are not aligned. This shoud be
+ * accessible to any target supporting TrustZone.
+ */
+static inline u32 __xuartps_readl(void *addr)
+{
+	/* Depending on the TrustZone's "world" the device belongs to use an
+	 * address space or another. This information is taken from the device
+	 * tree.
+	 */
+	if ((xuartps_map_world == 1) && (((u32)addr & 0xfffff000) ==
+				((u32)port->membase & 0xfffff000)))
+		return secure_read(port->mapbase + ((u32)addr & 0xfff));
+	else
+		return ioread32(addr);
+}
+
+static inline void __xuartps_writel(u32 val, void *addr)
+{
+	/* Depending on the TrustZone's "world" the device belongs to use an
+	 * address space or another. This information is taken from the device
+	 * tree.
+	 */
+	if ((xuartps_map_world == 1) && (((u32)addr & 0xfffff000) ==
+				((u32)port->membase & 0xfffff000)))
+		secure_write(val, port->mapbase + ((u32)addr & 0xfff));
+	else
+		iowrite32(val, addr);
+}
+
+#define xuartps_readl(offset)		__xuartps_readl(port->membase + offset)
+#define xuartps_writel(val, offset)	__xuartps_writel(val, port->membase + offset)
 
 /* Rx Trigger level */
 static int rx_trigger_level = 56;
@@ -425,22 +437,21 @@ static unsigned int xuartps_set_baud_rate(struct uart_port *port,
 	int div8;
 	struct xuartps *xuartps = port->private_data;
 
-#if 0
 	calc_baud = xuartps_calc_baud_divs(port->uartclk, baud, &bdiv, &cd,
 			&div8);
 
 	/* Write new divisors to hardware */
-	mreg = xuartps_readl(XUARTPS_MR_OFFSET);
-	if (div8)
-		mreg |= XUARTPS_MR_CLKSEL;
-	else
-		mreg &= ~XUARTPS_MR_CLKSEL;
-	xuartps_writel(mreg, XUARTPS_MR_OFFSET);
-	xuartps_writel(cd, XUARTPS_BAUDGEN_OFFSET);
-	xuartps_writel(bdiv, XUARTPS_BAUDDIV_OFFSET);
-#endif
-	xuartps->baud = baud;
-	calc_baud= baud;
+	if (xuartps_map_world == 0) {
+		mreg = xuartps_readl(XUARTPS_MR_OFFSET);
+		if (div8)
+			mreg |= XUARTPS_MR_CLKSEL;
+		else
+			mreg &= ~XUARTPS_MR_CLKSEL;
+		xuartps_writel(mreg, XUARTPS_MR_OFFSET);
+		xuartps_writel(cd, XUARTPS_BAUDGEN_OFFSET);
+		xuartps_writel(bdiv, XUARTPS_BAUDDIV_OFFSET);
+		xuartps->baud = baud;
+	}
 
 	return calc_baud;
 }
@@ -499,6 +510,7 @@ static int xuartps_clk_notifier_cb(struct notifier_block *nb,
 				(XUARTPS_CR_TX_DIS | XUARTPS_CR_RX_DIS),
 				XUARTPS_CR_OFFSET);
 
+		pr_info("Holaxxxxx1\n");
 		xuartps->baud = xuartps_set_baud_rate(xuartps->port,
 				xuartps->baud);
 
@@ -1185,7 +1197,6 @@ static void xuartps_console_write(struct console *co, const char *s,
  **/
 static int __init xuartps_console_setup(struct console *co, char *options)
 {
-	
 	struct uart_port *port = &xuartps_port[co->index];
 	int baud = 9600;
 	int bits = 8;
@@ -1259,6 +1270,7 @@ static struct uart_driver xuartps_uart_driver = {
 static int xuartps_probe(struct platform_device *pdev)
 {
 	int rc;
+	void *ptr;
 	struct uart_port *port;
 	struct resource *res, *res2;
 	unsigned int clk = 0;
@@ -1280,6 +1292,21 @@ static int xuartps_probe(struct platform_device *pdev)
 	if (id < 0) {
 		dev_warn(&pdev->dev, "failed to get alias id, errno %d\n", id);
 		id = 0;
+	}
+
+	ptr = of_get_property(pdev->dev.of_node, "arm-world", NULL);
+	if (!ptr) {
+		pr_info("No world specified for TrustZone configuration "
+			"mapping device to 'normal world' as default\n");
+		xuartps_map_world = 0; /* map to normal world by default */
+	} else {
+		xuartps_map_world = be32_to_cpup(ptr);
+		if ((xuartps_map_world != 0) && (xuartps_map_world != 1)) {
+			pr_err("%s: Bad 'world' in device tree\n", __func__);
+			BUG();
+		} else {
+			pr_info("XADC world:%d\n", xuartps_map_world);
+		}
 	}
 
 	port = xuartps_get_port(id);
